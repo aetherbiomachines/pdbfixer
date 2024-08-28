@@ -23,5 +23,9 @@ PDBFixer can be installed with conda or mamba.
 ```
 conda install -c conda-forge pdbfixer
 ```
+In this forked version, you can install using this:
+```
+pip install --extra-index-url http://pypi.aetherbio.com/simple --trusted-host pypi.aetherbio.com pdbfixer==1.9.0
+```
 
 Alternatively you can install from source, as described in the manual.
