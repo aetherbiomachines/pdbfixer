@@ -1241,7 +1241,10 @@ class PDBFixer(object):
         """If the file contains any nonstandard residues, download their definitions and build
         the information needed to add hydrogens to them.
         """
-        app.Modeller._loadStandardHydrogenDefinitions()
+        if not app.Modeller._hasLoadedStandardHydrogens:
+            app.Modeller.loadHydrogenDefinitions(os.path.join(os.path.dirname(__file__), 'data', 'hydrogens.xml'))
+            app.Modeller._hasLoadedStandardHydrogens = True
+        # app.Modeller._loadStandardHydrogenDefinitions()
         resnames = set(residue.name for residue in self.topology.residues())
         definitions = {}
         for name in resnames:
