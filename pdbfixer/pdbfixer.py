@@ -1242,7 +1242,7 @@ class PDBFixer(object):
         the information needed to add hydrogens to them.
         """
         if not app.Modeller._hasLoadedStandardHydrogens:
-            app.Modeller.loadHydrogenDefinitions(os.path.join(os.path.dirname(__file__), 'data', 'hydrogens.xml'))
+            app.Modeller.loadHydrogenDefinitions()
             app.Modeller._hasLoadedStandardHydrogens = True
         # app.Modeller._loadStandardHydrogenDefinitions()
         resnames = set(residue.name for residue in self.topology.residues())
