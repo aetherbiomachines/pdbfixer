@@ -6,7 +6,7 @@ Simbios, the NIH National Center for Physics-Based Simulation of
 Biological Structures at Stanford, funded under the NIH Roadmap for
 Medical Research, grant U54 GM072970. See https://simtk.org.
 
-Portions copyright (c) 2013-2024 Stanford University and the Authors.
+Portions copyright (c) 2013-2021 Stanford University and the Authors.
 Authors: Peter Eastman
 Contributors:
 
@@ -54,7 +54,6 @@ import sys
 import os
 import os.path
 import math
-from collections import defaultdict
 
 from pkg_resources import resource_filename
 
@@ -66,7 +65,7 @@ else:
     from cStringIO import StringIO
 
 substitutions = {
-    '2AS':'ASP', '3AH':'HIS', '5HP':'GLU', '5OW':'LYS', 'ACL':'ARG', 'AGM':'ARG', 'AIB':'ALA', 'ALM':'ALA', 'ALO':'THR', 'ALY':'LYS', 'ARM':'ARG',
+    '2AS':'ASP', '3AH':'HIS', '5HP':'GLU', 'ACL':'ARG', 'AGM':'ARG', 'AIB':'ALA', 'ALM':'ALA', 'ALO':'THR', 'ALY':'LYS', 'ARM':'ARG',
     'ASA':'ASP', 'ASB':'ASP', 'ASK':'ASP', 'ASL':'ASP', 'ASQ':'ASP', 'AYA':'ALA', 'BCS':'CYS', 'BHD':'ASP', 'BMT':'THR', 'BNN':'ALA',
     'BUC':'CYS', 'BUG':'LEU', 'C5C':'CYS', 'C6C':'CYS', 'CAS':'CYS', 'CCS':'CYS', 'CEA':'CYS', 'CGU':'GLU', 'CHG':'ALA', 'CLE':'LEU', 'CME':'CYS',
     'CSD':'ALA', 'CSO':'CYS', 'CSP':'CYS', 'CSS':'CYS', 'CSW':'CYS', 'CSX':'CYS', 'CXM':'MET', 'CY1':'CYS', 'CY3':'CYS', 'CYG':'CYS',
@@ -75,7 +74,7 @@ substitutions = {
     'DTH':'THR', 'DTR':'TRP', 'DTY':'TYR', 'DVA':'VAL', 'EFC':'CYS', 'FLA':'ALA', 'FME':'MET', 'GGL':'GLU', 'GL3':'GLY', 'GLZ':'GLY',
     'GMA':'GLU', 'GSC':'GLY', 'HAC':'ALA', 'HAR':'ARG', 'HIC':'HIS', 'HIP':'HIS', 'HMR':'ARG', 'HPQ':'PHE', 'HTR':'TRP', 'HYP':'PRO',
     'IAS':'ASP', 'IIL':'ILE', 'IYR':'TYR', 'KCX':'LYS', 'LLP':'LYS', 'LLY':'LYS', 'LTR':'TRP', 'LYM':'LYS', 'LYZ':'LYS', 'MAA':'ALA', 'MEN':'ASN',
-    'MHS':'HIS', 'MIS':'SER', 'MK8':'LEU', 'MLE':'LEU', 'MPQ':'GLY', 'MSA':'GLY', 'MSE':'MET', 'MVA':'VAL', 'NEM':'HIS', 'NEP':'HIS', 'NLE':'LEU',
+    'MHS':'HIS', 'MIS':'SER', 'MLE':'LEU', 'MPQ':'GLY', 'MSA':'GLY', 'MSE':'MET', 'MVA':'VAL', 'NEM':'HIS', 'NEP':'HIS', 'NLE':'LEU',
     'NLN':'LEU', 'NLP':'LEU', 'NMC':'GLY', 'OAS':'SER', 'OCS':'CYS', 'OMT':'MET', 'PAQ':'TYR', 'PCA':'GLU', 'PEC':'CYS', 'PHI':'PHE',
     'PHL':'PHE', 'PR3':'CYS', 'PRR':'ALA', 'PTR':'TYR', 'PYX':'CYS', 'SAC':'SER', 'SAR':'GLY', 'SCH':'CYS', 'SCS':'CYS', 'SCY':'CYS',
     'SEL':'SER', 'SEP':'SER', 'SET':'SER', 'SHC':'CYS', 'SHR':'LYS', 'SMC':'CYS', 'SOC':'CYS', 'STY':'TYR', 'SVA':'SER', 'TIH':'ALA',
@@ -98,15 +97,6 @@ class ModifiedResidue(object):
         self.number = number
         self.residueName = residueName
         self.standardName = standardName
-
-class Template:
-    """Template represents a standard residue, or a nonstandard one registered with registerTemplate()."""
-    def __init__(self, topology, positions, terminal=None):
-        self.topology = topology
-        self.positions = positions
-        if terminal is None:
-            terminal = [False]*topology.getNumAtoms()
-        self.terminal = terminal
 
 def _guessFileFormat(file, filename):
     """Guess whether a file is PDB or PDBx/mmCIF based on its filename and contents."""
@@ -286,7 +276,7 @@ class PDBFixer(object):
         for file in os.listdir(templatesPath):
             templatePdb = app.PDBFile(os.path.join(templatesPath, file))
             name = next(templatePdb.topology.residues()).name
-            self.templates[name] = Template(templatePdb.topology, templatePdb.positions)
+            self.templates[name] = templatePdb
 
     def _initializeFromPDB(self, file):
         """Initialize this object by reading a PDB file."""
@@ -354,96 +344,6 @@ class PDBFixer(object):
                 for row in modData.getRowList():
                     self.modifiedResidues.append(ModifiedResidue(row[asymIdCol], int(row[resNumCol]), row[resNameCol], row[standardResCol]))
 
-    def _getTemplate(self, name):
-        """Return the template with a name.  If none has been registered, this will return None."""
-        if name in self.templates:
-            return self.templates[name]
-        return None
-
-    def registerTemplate(self, topology, positions, terminal=None):
-        """Register a template for a nonstandard residue.  This allows PDBFixer to add missing residues of this type,
-        to add missing atoms to existing residues, and to mutate other residues to it.
-        Parameters
-        ----------
-        topology: openmm.app.Topology
-            A Topology containing a single chain with a single residue, describing the nonstandard residue
-            being registered.
-        positions: array of shape (n_atoms, 3)
-            The positions of the atoms in the residue in a typical conformation.  These positions are used
-            when adding missing atoms or residues.
-        terminal: optional list of bool
-            If this is present, it should be a list of length equal to the number of atoms in the residue.
-            If an element is True, that indicates the corresponding atom should only be added to terminal
-            residues.
-        """
-        residues = list(topology.residues())
-        if len(residues) != 1:
-            raise ValueError('The Topology must contain a single residue')
-        if topology.getNumAtoms() != len(positions):
-            raise ValueError('The number of positions does not match the number of atoms in the Topology')
-        if terminal is not None and len(terminal) != topology.getNumAtoms():
-            raise ValueError('The number of terminal flags does not match the number of atoms in the Topology')
-        self.templates[residues[0].name] = Template(topology, positions, terminal)
-
-    def downloadTemplate(self, name):
-        """Attempt to download a residue definition from the PDB and register a template for it.
-
-        Parameters
-        ----------
-        name: str
-            The name of the residue, as specified in the PDB Chemical Component Dictionary.
-
-        Returns
-        -------
-        True if a template was successfully registered, false otherwise.
-        """
-        name = name.upper()
-        try:
-            file = urlopen(f'https://files.rcsb.org/ligands/download/{name}.cif')
-            contents = file.read().decode('utf-8')
-            file.close()
-        except:
-            return False
-
-        # Load the atoms.
-
-        from openmm.app.internal.pdbx.reader.PdbxReader import PdbxReader
-        reader = PdbxReader(StringIO(contents))
-        data = []
-        reader.read(data)
-        block = data[0]
-        atomData = block.getObj('chem_comp_atom')
-        atomNameCol = atomData.getAttributeIndex('atom_id')
-        symbolCol = atomData.getAttributeIndex('type_symbol')
-        leavingCol = atomData.getAttributeIndex('pdbx_leaving_atom_flag')
-        xCol = atomData.getAttributeIndex('pdbx_model_Cartn_x_ideal')
-        yCol = atomData.getAttributeIndex('pdbx_model_Cartn_y_ideal')
-        zCol = atomData.getAttributeIndex('pdbx_model_Cartn_z_ideal')
-        topology = app.Topology()
-        chain = topology.addChain()
-        residue = topology.addResidue(name, chain)
-        positions = []
-        atomByName = {}
-        terminal = []
-        for row in atomData.getRowList():
-            atomName = row[atomNameCol]
-            atom = topology.addAtom(atomName, app.Element.getBySymbol(row[symbolCol]), residue)
-            atomByName[atomName] = atom
-            terminal.append(row[leavingCol] == 'Y')
-            positions.append(mm.Vec3(float(row[xCol]), float(row[yCol]), float(row[zCol]))*0.1)
-        positions = positions*unit.nanometers
-
-        # Load the bonds.
-
-        bondData = block.getObj('chem_comp_bond')
-        if bondData is not None:
-            atom1Col = bondData.getAttributeIndex('atom_id_1')
-            atom2Col = bondData.getAttributeIndex('atom_id_2')
-            for row in bondData.getRowList():
-                topology.addBond(atomByName[row[atom1Col]], atomByName[row[atom2Col]])
-        self.registerTemplate(topology, positions, terminal)
-        return True
-
     def _addAtomsToTopology(self, heavyAtomsOnly, omitUnknownMolecules):
         """Create a new Topology in which missing atoms have been added.
 
@@ -472,10 +372,10 @@ class PDBFixer(object):
         newAtoms = []
         existingAtomMap = {}
         addedAtomMap = {}
-        addedHeterogenBonds = []
+        addedOXT = []
         residueCenters = [self._computeResidueCenter(res).value_in_unit(unit.nanometers) for res in self.topology.residues()]*unit.nanometers
         for chain in self.topology.chains():
-            if omitUnknownMolecules and all(self._getTemplate(residue.name) is None for residue in chain.residues()):
+            if omitUnknownMolecules and not any(residue.name in self.templates for residue in chain.residues()):
                 continue
             chainResidues = list(chain.residues())
             newChain = newTopology.addChain(chain.id)
@@ -513,7 +413,7 @@ class PDBFixer(object):
 
                     # Find corresponding atoms in the residue and the template.
 
-                    template = self._getTemplate(residue.name)
+                    template = self.templates[residue.name]
                     atomPositions = dict((atom.name, self.positions[atom.index]) for atom in residue.atoms())
                     points1 = []
                     points2 = []
@@ -535,18 +435,6 @@ class PDBFixer(object):
                         addedAtomMap[residue][atom] = newAtom
                         templatePosition = template.positions[atom.index].value_in_unit(unit.nanometer)
                         newPositions.append((mm.Vec3(*np.dot(rotate, templatePosition+translate2))+translate1)*unit.nanometer)
-
-                    if residue.name not in app.Topology._standardBonds:
-
-                        # This is a heterogen.  Make sure bonds will get added for any new atoms.
-
-                        addedAtomNames = set(atom.name for atom in addedAtomMap[residue])
-                        newResidueAtoms = {atom.name: atom for atom in newResidue.atoms()}
-                        for atom1, atom2 in template.topology.bonds():
-                            if atom1.name in addedAtomNames or atom2.name in addedAtomNames:
-                                if atom1.name in newResidueAtoms and atom2.name in newResidueAtoms:
-                                    addedHeterogenBonds.append((newResidueAtoms[atom1.name], newResidueAtoms[atom2.name]))
-
                 if residue in self.missingTerminals:
                     terminalsToAdd = self.missingTerminals[residue]
                 else:
@@ -578,6 +466,7 @@ class PDBFixer(object):
                     if 'OXT' in terminalsToAdd:
                         newAtom = newTopology.addAtom('OXT', oxygen, newResidue)
                         newAtoms.append(newAtom)
+                        addedOXT.append(newAtom)
                         d_ca_o = atomPositions['O']-atomPositions['CA']
                         d_ca_c = atomPositions['C']-atomPositions['CA']
                         d_ca_c /= unit.sqrt(unit.dot(d_ca_c, d_ca_c))
@@ -587,19 +476,11 @@ class PDBFixer(object):
         newTopology.createStandardBonds()
         newTopology.createDisulfideBonds(newPositions)
 
-        # Add the existing bonds between atoms in heterogens.
+        # Add the bonds between atoms in heterogens.
 
         for a1,a2 in self.topology.bonds():
             if a1 in existingAtomMap and a2 in existingAtomMap and (a1.residue.name not in app.Topology._standardBonds or a2.residue.name not in app.Topology._standardBonds):
                 newTopology.addBond(existingAtomMap[a1], existingAtomMap[a2])
-
-        # Add any new bonds within heterogens.
-
-        bonds = set((atom1.index, atom2.index) for atom1, atom2 in newTopology.bonds())
-        for atom1, atom2 in addedHeterogenBonds:
-            if (atom1.index, atom2.index) not in bonds and (atom2.index, atom1.index) not in bonds:
-                newTopology.addBond(atom1, atom2)
-                bonds.add((atom1.index, atom2.index))
 
         # Return the results.
 
@@ -627,7 +508,7 @@ class PDBFixer(object):
         # Add the residues.
 
         for i, residueName in enumerate(residueNames):
-            template = self._getTemplate(residueName)
+            template = self.templates[residueName]
 
             # Find a translation that best matches the adjacent residue.
 
@@ -652,25 +533,6 @@ class PDBFixer(object):
                 newAtoms.append(newAtom)
                 templatePosition = template.positions[atom.index].value_in_unit(unit.nanometer)
                 newPositions.append(mm.Vec3(*np.dot(rotate, templatePosition))*unit.nanometer+translate)
-
-    def _renameNewChains(self, startIndex):
-        """Rename newly added chains to conform with existing naming conventions.
-        
-        Parameters
-        ----------
-        startIndex : int
-            The index of the first new chain in self.topology.chains().
-        """
-        # If all chains are new, nothing to do
-        if startIndex == 0:
-            return
-
-        # If the last chain ID was originally a letter, continue alphabetically until reaching Z
-        chains = list(self.topology.chains())
-        for newChainIndex in range(startIndex, len(chains)):
-            prevChainId = chains[newChainIndex - 1].id
-            if len(prevChainId) == 1 and "A" <= prevChainId < "Z":
-                chains[newChainIndex].id = chr(ord(prevChainId) + 1)
 
     def removeChains(self, chainIndices=None, chainIds=None):
         """Remove a set of chains from the structure.
@@ -822,7 +684,7 @@ class PDBFixer(object):
                     replacement = modres[key]
                     if replacement == 'DU':
                         replacement = 'DT'
-                    if self._getTemplate(replacement) != None:
+                    if replacement in self.templates:
                         nonstandard[residue] = replacement
         self.nonstandardResidues = [(r, nonstandard[r]) for r in sorted(nonstandard, key=lambda r: r.index)]
 
@@ -850,7 +712,7 @@ class PDBFixer(object):
 
             for residue, replaceWith in self.nonstandardResidues:
                 residue.name = replaceWith
-                template = self._getTemplate(replaceWith)
+                template = self.templates[replaceWith]
                 standardAtoms = set(atom.name for atom in template.topology.atoms())
                 for atom in residue.atoms():
                     if atom.element in (None, hydrogen) or atom.name not in standardAtoms:
@@ -878,10 +740,6 @@ class PDBFixer(object):
 
         Notes
         -----
-
-        If a target residue is not a standard amino acid, and if no template
-        has been registered for it with registerTemplate(), this function
-        attempts to look it up from the PDB and create a new template for it.
 
         We require three letter codes to avoid possible ambiguitities.
         We can't guarantee that the resulting model is a good one; for
@@ -923,24 +781,23 @@ class PDBFixer(object):
             if residue.name != old_name:
                 raise(ValueError("You asked to mutate chain %s residue %d name %s, but that residue is actually %s!" % (chain_id, resSeq, old_name, residue.name)))
 
-            if self._getTemplate(new_name) is None:
-                # Try to download a template from the PDB.
-                self.downloadTemplate(new_name)
-                if self._getTemplate(new_name) is None:
-                    raise(KeyError("Cannot find residue %s in template library!" % new_name))
+            try:
+                template = self.templates[new_name]
+            except KeyError:
+                raise(KeyError("Cannot find residue %s in template library!" % new_name))
 
             # Store mutation
             residue_map[residue] = new_name
 
         # If there are mutations to be made, make them.
-        if len(residue_map) > 0:
+        if len(residue_map) > 0:            
             deleteAtoms = [] # list of atoms to delete
 
             # Find atoms that should be deleted.
             for residue in residue_map.keys():
                 replaceWith = residue_map[residue]
                 residue.name = replaceWith
-                template = self._getTemplate(replaceWith)
+                template = self.templates[replaceWith]
                 standardAtoms = set(atom.name for atom in template.topology.atoms())
                 for atom in residue.atoms():
                     if atom.element in (None, hydrogen) or atom.name not in standardAtoms:
@@ -982,60 +839,23 @@ class PDBFixer(object):
         missingAtoms = {}
         missingTerminals = {}
 
-        # Determine which atoms have an external bond to another residue.
-
-        hasExternal = defaultdict(bool)
-        for atom1, atom2 in self.topology.bonds():
-            if atom1.residue != atom2.residue:
-                hasExternal[(atom1.residue, atom1.name)] = True
-                hasExternal[(atom2.residue, atom2.name)] = True
-        for chain in self.topology.chains():
-            chainResidues = list(chain.residues())
-            for residue in chain.residues():
-                atomNames = [atom.name for atom in residue.atoms()]
-                if all(name in atomNames for name in ['C', 'O', 'CA']):
-                    # We'll be adding peptide bonds.
-                    if residue != chainResidues[0]:
-                        hasExternal[(residue, 'N')] = True
-                    if residue != chainResidues[-1]:
-                        hasExternal[(residue, 'C')] = True
-
         # Loop over residues.
 
         for chain in self.topology.chains():
-            nucleic = any(res.name in dnaResidues or res.name in rnaResidues for res in chain.residues())
             chainResidues = list(chain.residues())
             for residue in chain.residues():
-                template = self._getTemplate(residue.name)
-                if template is not None:
-                    # If an atom is marked as terminal only, and if it is bonded to any atom that has an external bond
-                    # to another residue, we need to omit that atom and any other terminal-only atom bonded to it.
-
-                    bondedTo = defaultdict(set)
-                    for atom1, atom2 in template.topology.bonds():
-                        bondedTo[atom1].add(atom2)
-                        bondedTo[atom2].add(atom1)
-                    skip = set()
-                    for atom, terminal in zip(template.topology.atoms(), template.terminal):
-                        if terminal:
-                            for atom2 in bondedTo[atom]:
-                                if hasExternal[(residue, atom2.name)]:
-                                    skip.add(atom)
-                    for atom, terminal in zip(template.topology.atoms(), template.terminal):
-                        if terminal:
-                            for atom2 in bondedTo[atom]:
-                                if atom2 in skip:
-                                    skip.add(atom)
+                if residue.name in self.templates:
+                    template = self.templates[residue.name]
                     atomNames = set(atom.name for atom in residue.atoms())
-                    templateAtoms = [atom for atom in template.topology.atoms() if atom not in skip]
-                    if nucleic and residue == chainResidues[0] and (chain.index, 0) not in self.missingResidues:
+                    templateAtoms = list(template.topology.atoms())
+                    if residue == chainResidues[0] and (chain.index, 0) not in self.missingResidues:
                         templateAtoms = [atom for atom in templateAtoms if atom.name not in ('P', 'OP1', 'OP2')]
 
                     # Add atoms from the template that are missing.
 
                     missing = []
                     for atom in templateAtoms:
-                        if atom.name not in atomNames and atom.element != app.element.hydrogen:
+                        if atom.name not in atomNames:
                             missing.append(atom)
                     if len(missing) > 0:
                         missingAtoms[residue] = missing
@@ -1134,18 +954,8 @@ class PDBFixer(object):
             mm.LocalEnergyMinimizer.minimize(context)
             state = context.getState(getPositions=True)
             if newTopology.getNumResidues() > 1:
-                # When looking for pairs of atoms that are too close to each other, exclude pairs that
-                # are in the same residue or are directly bonded to each other.
-
-                exclusions = dict((atom, {a.index for a in atom.residue.atoms()}) for atom in newAtoms)
-                for a1, a2 in newTopology.bonds():
-                    if a1 in exclusions:
-                        exclusions[a1].add(a2.index)
-                    if a2 in exclusions:
-                        exclusions[a2].add(a1.index)
-                cutoff = 0.13
-                nearest = self._findNearestDistance(context, newAtoms, cutoff, exclusions)
-                if nearest < cutoff:
+                nearest = self._findNearestDistance(context, newTopology, newAtoms)
+                if nearest < 0.13:
 
                     # Some atoms are very close together.  Run some dynamics while slowly increasing the strength of the
                     # repulsive interaction to try to improve the result.
@@ -1153,11 +963,11 @@ class PDBFixer(object):
                     for i in range(10):
                         context.setParameter('C', 0.15*(i+1))
                         integrator.step(200)
-                        d = self._findNearestDistance(context, newAtoms, cutoff, exclusions)
+                        d = self._findNearestDistance(context, newTopology, newAtoms)
                         if d > nearest:
                             nearest = d
                             state = context.getState(getPositions=True)
-                            if nearest >= cutoff:
+                            if nearest >= 0.13:
                                 break
                     context.setState(state)
                     context.setParameter('C', 1.0)
@@ -1207,20 +1017,20 @@ class PDBFixer(object):
         self.topology = modeller.topology
         self.positions = modeller.positions
 
-    def addMissingHydrogens(self, pH=7.0, forcefield=None):
+    def addMissingHydrogens(self, pH=7.0):
         """Add missing hydrogen atoms to the structure.
 
         Parameters
         ----------
         pH : float, optional, default=7.0
             The pH based on which to select hydrogens.
-        forcefield : ForceField, optional, default=None
-            The forcefield used when adding and minimizing hydrogens. If None, a default forcefield is used.
 
         Notes
         -----
-        No extensive electrostatic analysis is performed; only default residue pKas are used.  The pH is only
-        taken into account for standard amino acids.
+        No extensive electrostatic analysis is performed; only default residue pKas are used.
+
+        Examples
+        --------
 
         Examples
         --------
@@ -1229,121 +1039,14 @@ class PDBFixer(object):
 
         >>> fixer = PDBFixer(pdbid='1VII')
         >>> fixer.addMissingHydrogens(pH=8.0)
+
         """
-        extraDefinitions = self._downloadNonstandardDefinitions()
-        variants = [self._describeVariant(res, extraDefinitions) for res in self.topology.residues()]
         modeller = app.Modeller(self.topology, self.positions)
-        modeller.addHydrogens(pH=pH, forcefield=forcefield, variants=variants)
+        modeller.addHydrogens(pH=pH)
         self.topology = modeller.topology
         self.positions = modeller.positions
 
-    def _downloadNonstandardDefinitions(self):
-        """If the file contains any nonstandard residues, download their definitions and build
-        the information needed to add hydrogens to them.
-        """
-        if not app.Modeller._hasLoadedStandardHydrogens:
-            app.Modeller.loadHydrogenDefinitions()
-            app.Modeller._hasLoadedStandardHydrogens = True
-        # app.Modeller._loadStandardHydrogenDefinitions()
-        resnames = set(residue.name for residue in self.topology.residues())
-        definitions = {}
-        for name in resnames:
-            if name not in app.Modeller._residueHydrogens:
-                # Try to download the definition.
-
-                try:
-                    file = urlopen(f'https://files.rcsb.org/ligands/download/{name}.cif')
-                    contents = file.read().decode('utf-8')
-                    file.close()
-                except:
-                    continue
-
-                # Record the atoms and bonds.
-
-                from openmm.app.internal.pdbx.reader.PdbxReader import PdbxReader
-                reader = PdbxReader(StringIO(contents))
-                data = []
-                reader.read(data)
-                block = data[0]
-                atomData = block.getObj('chem_comp_atom')
-                atomNameCol = atomData.getAttributeIndex('atom_id')
-                symbolCol = atomData.getAttributeIndex('type_symbol')
-                leavingCol = atomData.getAttributeIndex('pdbx_leaving_atom_flag')
-                atoms = [(row[atomNameCol], row[symbolCol].upper(), row[leavingCol] == 'Y') for row in atomData.getRowList()]
-                bondData = block.getObj('chem_comp_bond')
-                if bondData is None:
-                    bonds = []
-                else:
-                    atom1Col = bondData.getAttributeIndex('atom_id_1')
-                    atom2Col = bondData.getAttributeIndex('atom_id_2')
-                    bonds = [(row[atom1Col], row[atom2Col]) for row in bondData.getRowList()]
-                definitions[name] = (atoms, bonds)
-        return definitions
-
-    def _describeVariant(self, residue, definitions):
-        """Build the variant description to pass to addHydrogens() for a residue."""
-        if residue.name not in app.PDBFile._standardResidues and self._getTemplate(residue.name) is not None:
-            # The user has registered a template for this residue.  Use the hydrogens from it.
-            template = self._getTemplate(residue.name)
-            atoms = [(atom.name, atom.element.symbol.upper(), terminal) for atom, terminal in zip(template.topology.atoms(), template.terminal)]
-            resAtoms = dict((atom.name, atom) for atom in residue.atoms())
-            bonds = []
-            for atom1, atom2 in template.topology.bonds():
-                if atom1.element == app.element.hydrogen and atom2.name in resAtoms:
-                    bonds.append((atom1.name, atom2.name))
-                elif atom2.element == app.element.hydrogen and atom1.name in resAtoms:
-                    bonds.append((atom2.name, atom1.name))
-        elif residue.name in definitions:
-            # We downloaded a definition.
-            atoms, bonds = definitions[residue.name]
-        else:
-            return None
-
-        # See if the heavy atoms are identical.
-
-        topologyHeavy = dict((atom.name, atom) for atom in residue.atoms() if atom.element is not None and atom.element != app.element.hydrogen)
-        definitionHeavy = dict((atom[0], atom) for atom in atoms if atom[1] != '' and atom[1] != 'H')
-        for name in topologyHeavy:
-            if name not in definitionHeavy or definitionHeavy[name][1] != topologyHeavy[name].element.symbol.upper():
-                # This atom isn't present in the definition
-                return None
-        for name in definitionHeavy:
-            if name not in topologyHeavy and not definitionHeavy[name][2]:
-                # This isn't a leaving atom, and it isn't present in the topology.
-                return None
-
-        # Build the list of hydrogens.
-
-        variant = []
-        definitionAtoms = dict((atom[0], atom) for atom in atoms)
-        topologyBonds = list(residue.bonds())
-        for name1, name2 in bonds:
-            if definitionAtoms[name1][1] == 'H':
-                h, parent = name1, name2
-            elif definitionAtoms[name2][1] == 'H':
-                h, parent = name2, name1
-            else:
-                continue
-            if definitionAtoms[h][2]:
-                # The hydrogen is marked as a leaving atom.  Omit it if the parent is not present,
-                # or if the parent has an external bond.
-                if parent not in topologyHeavy:
-                    continue
-                parentAtom = topologyHeavy[parent]
-                exclude = False
-                for atom1, atom2 in topologyBonds:
-                    if atom1 == parentAtom and atom2.residue != residue:
-                        exclude = True
-                        break
-                    if atom2 == parentAtom and atom1.residue != residue:
-                        exclude = True
-                        break
-                if exclude:
-                    continue
-            variant.append((h, parent))
-        return variant
-
-    def addSolvent(self, boxSize=None, padding=None, boxVectors=None, positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*unit.molar, boxShape='cube'):
+    def addSolvent(self, boxSize=None, padding=None, boxVectors=None, positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*unit.molar):
         """Add a solvent box surrounding the structure.
 
         Parameters
@@ -1360,8 +1063,6 @@ class PDBFixer(object):
             The type of negative ion to add.  Allowed values are 'Cl-', 'Br-', 'F-', and 'I-'.
         ionicStrength : openmm.unit.Quantity with units compatible with molar, optional, default=0*molar
             The total concentration of ions (both positive and negative) to add.  This does not include ions that are added to neutralize the system.
-        boxShape: str='cube'
-            the box shape to use.  Allowed values are 'cube', 'dodecahedron', and 'octahedron'.  If padding is None, this is ignored.
 
         Examples
         --------
@@ -1377,13 +1078,16 @@ class PDBFixer(object):
 
         """
 
-        nChains = sum(1 for _ in self.topology.chains())
         modeller = app.Modeller(self.topology, self.positions)
         forcefield = self._createForceField(self.topology, True)
-        modeller.addSolvent(forcefield, padding=padding, boxSize=boxSize, boxVectors=boxVectors, boxShape=boxShape, positiveIon=positiveIon, negativeIon=negativeIon, ionicStrength=ionicStrength)
+        modeller.addSolvent(forcefield, padding=padding, boxSize=boxSize, boxVectors=boxVectors, positiveIon=positiveIon, negativeIon=negativeIon, ionicStrength=ionicStrength)
+        chains = list(modeller.topology.chains())
+        if len(chains) == 1:
+            chains[0].id = 'A'
+        else:
+            chains[-1].id = chr(ord(chains[-2].id)+1)
         self.topology = modeller.topology
         self.positions = modeller.positions
-        self._renameNewChains(nChains)
 
     def addMembrane(self, lipidType='POPC', membraneCenterZ=0*unit.nanometer, minimumPadding=1*unit.nanometer, positiveIon='Na+', negativeIon='Cl-', ionicStrength=0*unit.molar):
         """Add a lipid membrane to the structure.
@@ -1406,14 +1110,16 @@ class PDBFixer(object):
         ionicStrength : openmm.unit.Quantity with units compatible with molar, optional, default=0*molar
             The total concentration of ions (both positive and negative) to add.  This does not include ions that are added to neutralize the system.
         """
-
-        nChains = sum(1 for _ in self.topology.chains())
         modeller = app.Modeller(self.topology, self.positions)
         forcefield = self._createForceField(self.topology, True)
         modeller.addMembrane(forcefield, lipidType=lipidType, minimumPadding=minimumPadding, positiveIon=positiveIon, negativeIon=negativeIon, ionicStrength=ionicStrength)
+        chains = list(modeller.topology.chains())
+        if len(chains) == 1:
+            chains[0].id = 'A'
+        else:
+            chains[-1].id = chr(ord(chains[-2].id)+1)
         self.topology = modeller.topology
         self.positions = modeller.positions
-        self._renameNewChains(nChains)
 
     def _createForceField(self, newTopology, water):
         """Create a force field to use for optimizing the positions of newly added atoms."""
@@ -1485,23 +1191,18 @@ class PDBFixer(object):
                 forcefield._templateSignatures[signature] = [template]
         return forcefield
 
-    def _findNearestDistance(self, context, newAtoms, cutoff, exclusions):
+    def _findNearestDistance(self, context, topology, newAtoms):
         """Given a set of newly added atoms, find the closest distance between one of those atoms and another atom."""
 
         positions = context.getState(getPositions=True).getPositions(asNumpy=True).value_in_unit(unit.nanometer)
-        boxSize = np.max(positions, axis=0)-np.min(positions, axis=0)
-        boxVectors = [(boxSize[0], 0, 0), (0, boxSize[1], 0), (0, 0, boxSize[2])]
-        cells = app.modeller._CellList(positions, cutoff, boxVectors, False)
-        nearest_squared = sys.float_info.max
+        atomResidue = [atom.residue for atom in topology.atoms()]
+        nearest = sys.float_info.max
         for atom in newAtoms:
-            excluded = exclusions[atom]
-            for i in cells.neighbors(positions[atom.index]):
-                if i not in excluded:
-                    p = positions[atom.index]-positions[i]
-                    dist_squared = np.dot(p, p)
-                    if dist_squared < nearest_squared:
-                        nearest_squared = dist_squared
-        return np.sqrt(nearest_squared)
+            p = positions-positions[atom.index]
+            dist = math.sqrt(min(np.dot(p[i], p[i]) for i in range(len(atomResidue)) if atomResidue[i] != atom.residue))
+            if dist < nearest:
+                nearest = dist
+        return nearest
 
 
 def main():
